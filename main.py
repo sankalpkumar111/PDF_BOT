@@ -1,9 +1,8 @@
-import telegram.ext
+import os
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 from dotenv import load_dotenv
-import os
-from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2 import PdfReader, PdfWriter, PdfMerger
 
 # Load environment variables
 load_dotenv()
@@ -12,12 +11,13 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 # Define states for the conversation
 ASKING_UNLOCK_PASSWORD = 1
+ASKING_PASSWORD = 2
 
 # Dictionary to store user-uploaded files and their context
 user_files = {}
-# Dictionary to store the number of password attempts
 password_attempts = {}
 
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name  
     await update.message.reply_text(
@@ -61,23 +61,7 @@ async def content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '''
     )
 
-# Contact command
-async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        '''
-        **Contact Us:**
 
-        * **Phone:** +91 987 654 3210
-        * **Email:** support@pdfmaster.com
-        * **Address:** PDF Master Solutions, New Delhi, India
-
-        **Follow Us:**
-        * **Twitter:** @PDFMaster
-        * **LinkedIn:** PDF Master Solutions
-
-        **Support Hours:** Mon-Fri 9:00 AM - 6:00 PM IST
-        '''
-    )
 
 # Handle PDF uploads
 async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -87,115 +71,130 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     file = await update.message.document.get_file()
     file_path = f"{user_id}_{file.file_id}.pdf"
-    
-    # Download the file to the specified path
     await file.download_to_drive(file_path)
-    
     user_files[user_id].append(file_path)
 
-    await update.message.reply_text("PDF received! Send more or type /merge to merge the PDFs, /split to split the PDF, /lock to lock the PDF with a password, /unlock to unlock the PDF, or /compress to compress the PDF.")
+    await update.message.reply_text(
+        "PDF received! Send more or use /merge, /split, /lock, /unlock, or /compress."
+    )
 
-# Start the unlocking process and ask for the password
-async def unlock_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Merge PDFs
+async def merge_pdfs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_files or len(user_files[user_id]) < 2:
+        await update.message.reply_text("Please upload at least two PDFs before merging.")
+    else:
+        merger = PdfMerger()
+        for pdf in user_files[user_id]:
+            merger.append(pdf)
+
+        merged_pdf_path = f"{user_id}_merged.pdf"
+        with open(merged_pdf_path, "wb") as merged_pdf:
+            merger.write(merged_pdf)
+
+        await update.message.reply_document(document=open(merged_pdf_path, "rb"), filename="merged.pdf")
+        merger.close()
+
+        for pdf in user_files[user_id]:
+            os.remove(pdf)
+        os.remove(merged_pdf_path)
+        user_files[user_id] = []
+
+# Lock a PDF
+async def lock_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_files or len(user_files[user_id]) != 1:
-        await update.message.reply_text(
-            "Please send a single PDF file that you would like to unlock. When you are done, use the /unlock command again."
-        )
+        await update.message.reply_text("Please upload a single PDF to lock and use /lock again.")
         return ConversationHandler.END
-    else:
-        password_attempts[user_id] = 0  # Initialize the attempt counter
-        await update.message.reply_text("Please enter the password used to lock this PDF.")
-        return ASKING_UNLOCK_PASSWORD
+    await update.message.reply_text("Enter the password to lock this PDF:")
+    return ASKING_PASSWORD
 
-# Handle password input and unlock the PDF
-async def handle_unlock_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in user_files and len(user_files[user_id]) == 1:
         password = update.message.text
+        pdf_reader = PdfReader(user_files[user_id][0])
+        pdf_writer = PdfWriter()
 
-        # Read the PDF and attempt to unlock it
-        try:
-            pdf_reader = PdfReader(user_files[user_id][0])
-            pdf_reader.decrypt(password)
-            
-            pdf_writer = PdfWriter()
-            for page in pdf_reader.pages:
-                pdf_writer.add_page(page)
+        for page in pdf_reader.pages:
+            pdf_writer.add_page(page)
 
-            unlocked_pdf_path = f"{user_id}_unlocked.pdf"
-            with open(unlocked_pdf_path, "wb") as unlocked_pdf:
-                pdf_writer.write(unlocked_pdf)
+        pdf_writer.encrypt(user_pwd=password)
+        locked_pdf_path = f"{user_id}_locked.pdf"
+        with open(locked_pdf_path, "wb") as locked_pdf:
+            pdf_writer.write(locked_pdf)
 
-            # Send the unlocked PDF to the user
-            await update.message.reply_document(document=open(unlocked_pdf_path, "rb"), filename="unlocked.pdf")
+        await update.message.reply_document(document=open(locked_pdf_path, "rb"), filename="locked.pdf")
+        os.remove(user_files[user_id][0])
+        os.remove(locked_pdf_path)
+        user_files[user_id] = []
 
-            # Clean up
-            os.remove(user_files[user_id][0])
-            os.remove(unlocked_pdf_path)
-            user_files[user_id] = []
-            del password_attempts[user_id]  # Remove the attempt counter
+    return ConversationHandler.END
 
-            return ConversationHandler.END
-
-        except Exception as e:
-            # Increment the attempt counter
-            password_attempts[user_id] += 1
-            if password_attempts[user_id] < 2:
-                await update.message.reply_text(
-                    "The password you entered is incorrect. Please try again."
-                )
-                return ASKING_UNLOCK_PASSWORD
-            else:
-                await update.message.reply_text(
-                    "The password you entered is incorrect. You've reached the maximum number of attempts."
-                )
-                del password_attempts[user_id]  # Remove the attempt counter
-                return ConversationHandler.END
-    else:
-        await update.message.reply_text(
-            "Please upload a PDF file first and then use the /unlock command."
-        )
+# Unlock a PDF
+async def unlock_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_files or len(user_files[user_id]) != 1:
+        await update.message.reply_text("Upload a single PDF to unlock and use /unlock again.")
         return ConversationHandler.END
+    await update.message.reply_text("Enter the password to unlock this PDF:")
+    password_attempts[user_id] = 0
+    return ASKING_UNLOCK_PASSWORD
 
-# Compress PDF function
+async def handle_unlock_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    password = update.message.text
+    try:
+        pdf_reader = PdfReader(user_files[user_id][0])
+        pdf_reader.decrypt(password)
+
+        pdf_writer = PdfWriter()
+        for page in pdf_reader.pages:
+            pdf_writer.add_page(page)
+
+        unlocked_pdf_path = f"{user_id}_unlocked.pdf"
+        with open(unlocked_pdf_path, "wb") as unlocked_pdf:
+            pdf_writer.write(unlocked_pdf)
+
+        await update.message.reply_document(document=open(unlocked_pdf_path, "rb"), filename="unlocked.pdf")
+        os.remove(user_files[user_id][0])
+        os.remove(unlocked_pdf_path)
+        user_files[user_id] = []
+        del password_attempts[user_id]
+
+    except Exception:
+        password_attempts[user_id] += 1
+        if password_attempts[user_id] < 2:
+            await update.message.reply_text("Incorrect password. Try again.")
+            return ASKING_UNLOCK_PASSWORD
+        else:
+            await update.message.reply_text("Too many failed attempts. Operation aborted.")
+            del password_attempts[user_id]
+
+    return ConversationHandler.END
+
+# Compress a PDF
 async def compress_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_files or len(user_files[user_id]) != 1:
-        await update.message.reply_text(
-            "Please send a single PDF file that you would like to compress. When you are done, use the /compress command again."
-        )
-        return ConversationHandler.END
-    else:
-        await update.message.reply_text("Compressing your PDF, please wait...")
+        await update.message.reply_text("Upload a single PDF to compress and use /compress again.")
+        return
+    input_pdf_path = user_files[user_id][0]
+    output_pdf_path = f"{user_id}_compressed.pdf"
 
-        try:
-            input_pdf_path = user_files[user_id][0]
-            output_pdf_path = f"{user_id}_compressed.pdf"
+    pdf_reader = PdfReader(input_pdf_path)
+    pdf_writer = PdfWriter()
 
-            pdf_reader = PdfReader(input_pdf_path)
-            pdf_writer = PdfWriter()
+    for page in pdf_reader.pages:
+        pdf_writer.add_page(page)
 
-            # Copy all pages from the reader to the writer
-            for page in pdf_reader.pages:
-                pdf_writer.add_page(page)
+    with open(output_pdf_path, "wb") as compressed_pdf:
+        pdf_writer.write(compressed_pdf)
 
-            # Reduce the quality of the images (if any) in the PDF
-            with open(output_pdf_path, "wb") as output_pdf:
-                pdf_writer.write(output_pdf)
-
-            # Send the compressed PDF back to the user
-            await update.message.reply_document(document=open(output_pdf_path, "rb"), filename="compressed.pdf")
-
-            # Clean up
-            os.remove(input_pdf_path)
-            os.remove(output_pdf_path)
-            user_files[user_id] = []
-
-        except Exception as e:
-            await update.message.reply_text("An error occurred while compressing the PDF.")
-        
-        return ConversationHandler.END
+    await update.message.reply_document(document=open(output_pdf_path, "rb"), filename="compressed.pdf")
+    os.remove(input_pdf_path)
+    os.remove(output_pdf_path)
+    user_files[user_id] = []
 
 # Create the bot application
 application = Application.builder().token(TOKEN).build()
@@ -204,22 +203,21 @@ application = Application.builder().token(TOKEN).build()
 application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('help', helps))
 application.add_handler(CommandHandler('content', content))
-application.add_handler(CommandHandler('contact', contact))
 application.add_handler(MessageHandler(filters.Document.PDF, handle_pdf_upload))
-
-# Conversation handler for unlocking PDFs
-unlock_conv_handler = ConversationHandler(
-    entry_points=[CommandHandler('unlock', unlock_pdf)],
-    states={
-        ASKING_UNLOCK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unlock_password)],
-    },
-    fallbacks=[],
-)
-
-application.add_handler(unlock_conv_handler)
-
-# Register compress command handler
+application.add_handler(CommandHandler('merge', merge_pdfs))
 application.add_handler(CommandHandler('compress', compress_pdf))
+
+# Conversation handlers
+application.add_handler(ConversationHandler(
+    entry_points=[CommandHandler('lock', lock_pdf)],
+    states={ASKING_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password)]},
+    fallbacks=[]
+))
+application.add_handler(ConversationHandler(
+    entry_points=[CommandHandler('unlock', unlock_pdf)],
+    states={ASKING_UNLOCK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unlock_password)]},
+    fallbacks=[]
+))
 
 # Start polling
 application.run_polling()
