@@ -33,7 +33,7 @@ async def helps(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         /start - Start interacting with the bot
         /content - Get tips on effectively managing and working with PDFs
-        /contact - Get in touch with us
+       
         /merge - Send me multiple PDF files, and I will merge them into one
         /split - Split a PDF file into separate documents based on the pages you choose
         /lock - Lock a PDF with a password
