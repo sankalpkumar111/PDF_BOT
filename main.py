@@ -49,13 +49,13 @@ async def helps(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         '''
-        **PDF Management Tips:**
+        PDF Management Tips:
 
-        1. **Organize:** Keep your PDFs organized in folders based on categories.
-        2. **Security:** Use password protection for sensitive PDF files.
-        3. **Optimization:** Compress PDFs to reduce file size without compromising quality.
-        4. **Conversion:** Convert PDFs to other formats (e.g., Word, Excel) for easier editing.
-        5. **Backup:** Regularly back up your PDFs to avoid data loss.
+        1. Organize: Keep your PDFs organized in folders based on categories.
+        2. Security: Use password protection for sensitive PDF files.
+        3. Optimization: Compress PDFs to reduce file size without compromising quality.
+        4. Conversion: Convert PDFs to other formats (e.g., Word, Excel) for easier editing.
+        5. Backup: Regularly back up your PDFs to avoid data loss.
 
         Use the bot to easily manage and manipulate your PDF files!
         '''
